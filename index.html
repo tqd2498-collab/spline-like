@@ -3,38 +3,15 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Spline Like</title>
+    <title>Particles Morph</title>
     <style>
-      html, body {
-        margin: 0;
-        padding: 0;
-        width: 100%;
-        height: 100%;
-        overflow: hidden;
-        background: white;
-      }
-      #stage {
-        width: 100vw;
-        height: 100vh;
-        position: relative;
-      }
-      canvas {
-        display: block;
-      }
-      #fallback {
-        position: absolute;
-        inset: 16px;
-        font: 14px/1.4 system-ui, sans-serif;
-        color: #111827;
-        opacity: 0.75;
-        pointer-events: none;
-      }
+      html, body { margin:0; padding:0; width:100%; height:100%; background:transparent; overflow:hidden; }
+      #stage { width:100vw; height:100vh; position:relative; }
+      canvas { display:block; }
     </style>
   </head>
   <body>
-    <div id="stage">
-      <div id="fallback">Loading 3D… If this stays, the script failed.</div>
-    </div>
+    <div id="stage"></div>
     <script type="module" src="./app.js"></script>
   </body>
 </html>
