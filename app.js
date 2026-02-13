@@ -1,9 +1,14 @@
-// /src/three-particle-scatter.js
+// /app.js
+// GitHub Pages-safe, particle-style objects with distance-based scattering.
+// Controls: move mouse to scatter, click to swap object, Space = toggle solid/particles, R = rebuild particles.
+
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.module.js";
 import { RoundedBoxGeometry } from "https://cdn.jsdelivr.net/npm/three@0.152.2/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { MeshSurfaceSampler } from "https://cdn.jsdelivr.net/npm/three@0.152.2/examples/jsm/math/MeshSurfaceSampler.js";
 
+/* ---------------------------------- mount --------------------------------- */
 const mount = document.getElementById("stage");
+if (!mount) throw new Error('Missing #stage element');
 
 /* ----------------------------- renderer/scene ----------------------------- */
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -15,12 +20,7 @@ mount.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 
-const camera = new THREE.PerspectiveCamera(
-  42,
-  mount.clientWidth / mount.clientHeight,
-  0.1,
-  200
-);
+const camera = new THREE.PerspectiveCamera(42, mount.clientWidth / mount.clientHeight, 0.1, 200);
 camera.position.set(0, 1.15, 7.6);
 
 scene.add(new THREE.AmbientLight(0xffffff, 0.35));
@@ -45,11 +45,7 @@ const obsidian = new THREE.Color("#0B1220");
 const charcoal = new THREE.Color("#111827");
 
 function matPBR(color, rough = 0.55, metal = 0.15) {
-  return new THREE.MeshStandardMaterial({
-    color,
-    roughness: rough,
-    metalness: metal,
-  });
+  return new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: metal });
 }
 function matGlass(color, opacity = 0.2) {
   return new THREE.MeshPhysicalMaterial({
@@ -74,15 +70,12 @@ function setAllMaterials(root, factory) {
   });
 }
 
-/* --------------------------- more complex objects -------------------------- */
+/* --------------------------- sophisticated objects -------------------------- */
 function makeGadgetCore() {
   const g = new THREE.Group();
 
   const shell = tagBaseColor(
-    new THREE.Mesh(
-      new RoundedBoxGeometry(2.3, 1.35, 1.1, 10, 0.14),
-      matPBR(ink, 0.55, 0.22)
-    ),
+    new THREE.Mesh(new RoundedBoxGeometry(2.3, 1.35, 1.1, 10, 0.14), matPBR(ink, 0.55, 0.22)),
     ink
   );
 
@@ -155,7 +148,7 @@ function makeDeskTotem() {
   crown.rotation.set(0.55, 0.35, 0.1);
 
   const halo = tagBaseColor(
-    new THREE.Mesh(new THREE.TorusGeometry(0.92, 0.05, 16, 120), matPBR(paper, 0.35, 0.02)),
+    new THREE.Mesh(new THREE.TorusGeometry(0.92, 0.05, 16, 120), matPBR(paper, 0.45, 0.05)),
     paper
   );
   halo.position.y = 1.22;
@@ -185,10 +178,7 @@ function makeOrbRig() {
     ink
   );
 
-  const inner = tagBaseColor(
-    new THREE.Mesh(new THREE.SphereGeometry(0.74, 48, 30), matGlass(cobalt, 0.13)),
-    cobalt
-  );
+  const inner = tagBaseColor(new THREE.Mesh(new THREE.SphereGeometry(0.74, 48, 30), matGlass(cobalt, 0.13)), cobalt);
 
   const bands = new THREE.Group();
   for (let i = 0; i < 3; i += 1) {
@@ -224,29 +214,24 @@ function collectMeshes(root) {
   const meshes = [];
   root.updateMatrixWorld(true);
   root.traverse((o) => {
-    if (!o.isMesh) return;
-    meshes.push(o);
+    if (o.isMesh) meshes.push(o);
   });
   return meshes;
 }
 
 function allocateCounts(meshes, totalCount) {
-  const weights = meshes.map((m) => {
-    const pos = m.geometry?.attributes?.position?.count ?? 0;
-    return Math.max(1, pos);
-  });
+  const weights = meshes.map((m) => Math.max(1, m.geometry?.attributes?.position?.count ?? 1));
   const sum = weights.reduce((a, b) => a + b, 0);
 
   let remaining = totalCount;
-  const counts = weights.map((w, i) => {
-    const c = i === weights.length - 1 ? remaining : Math.max(64, Math.floor((w / sum) * totalCount));
+  return weights.map((w, i) => {
+    const c = i === weights.length - 1 ? remaining : Math.max(128, Math.floor((w / sum) * totalCount));
     remaining -= c;
     return c;
   });
-  return counts;
 }
 
-function makeParticleSystemFromObject(root, totalCount = 14000) {
+function makeParticleSystemFromObject(root, totalCount = 16000) {
   const meshes = collectMeshes(root);
   const counts = allocateCounts(meshes, totalCount);
 
@@ -259,21 +244,19 @@ function makeParticleSystemFromObject(root, totalCount = 14000) {
   const p = new THREE.Vector3();
   const n = new THREE.Vector3();
   const r = new THREE.Vector3();
-  const tmpColor = new THREE.Color();
+  const c = new THREE.Color();
 
   let cursor = 0;
 
   for (let mi = 0; mi < meshes.length; mi += 1) {
     const mesh = meshes[mi];
+
+    // IMPORTANT: sample in LOCAL SPACE (no world bake) to avoid double-transform bugs.
     const sampler = new MeshSurfaceSampler(mesh).build();
     const baseColor = mesh.userData.baseColor || ink;
 
     for (let i = 0; i < counts[mi]; i += 1) {
       sampler.sample(p, n);
-
-      // already in world space? sampler samples in local; convert -> world
-      p.applyMatrix4(mesh.matrixWorld);
-      n.transformDirection(mesh.matrixWorld);
 
       const idx = cursor * 3;
 
@@ -285,12 +268,7 @@ function makeParticleSystemFromObject(root, totalCount = 14000) {
       normals[idx + 1] = n.y;
       normals[idx + 2] = n.z;
 
-      // random "scatter direction" biased by normal + noise
-      r.set(
-        (Math.random() * 2 - 1) * 0.85,
-        (Math.random() * 2 - 1) * 0.85,
-        (Math.random() * 2 - 1) * 0.85
-      )
+      r.set((Math.random() * 2 - 1) * 0.85, (Math.random() * 2 - 1) * 0.85, (Math.random() * 2 - 1) * 0.85)
         .addScaledVector(n, 0.9)
         .normalize()
         .multiplyScalar(0.5 + Math.random() * 1.6);
@@ -301,10 +279,10 @@ function makeParticleSystemFromObject(root, totalCount = 14000) {
 
       seeds[cursor] = Math.random() * 1000;
 
-      tmpColor.copy(baseColor).lerp(paper, Math.random() * 0.15);
-      colors[idx + 0] = tmpColor.r;
-      colors[idx + 1] = tmpColor.g;
-      colors[idx + 2] = tmpColor.b;
+      c.copy(baseColor).lerp(paper, Math.random() * 0.15);
+      colors[idx + 0] = c.r;
+      colors[idx + 1] = c.g;
+      colors[idx + 2] = c.b;
 
       cursor += 1;
       if (cursor >= totalCount) break;
@@ -325,16 +303,16 @@ function makeParticleSystemFromObject(root, totalCount = 14000) {
     blending: THREE.AdditiveBlending,
     uniforms: {
       uTime: { value: 0 },
-      uMouse: { value: new THREE.Vector3(0, 0, 0) },
-      uScatter: { value: 1.55 },
+      uMouseLocal: { value: new THREE.Vector3(0, 0, 0) },
+      uScatter: { value: 1.65 },
       uMinDist: { value: 0.25 },
       uMaxDist: { value: 2.35 },
-      uPointSize: { value: 2.2 }, // in pixels-ish (scaled in shader)
+      uPointSize: { value: 2.2 },
       uAlpha: { value: 0.9 },
     },
     vertexShader: /* glsl */ `
       uniform float uTime;
-      uniform vec3 uMouse;
+      uniform vec3 uMouseLocal;
       uniform float uScatter;
       uniform float uMinDist;
       uniform float uMaxDist;
@@ -348,18 +326,15 @@ function makeParticleSystemFromObject(root, totalCount = 14000) {
       varying vec3 vColor;
       varying float vAlpha;
 
-      float saturate(float x){ return clamp(x, 0.0, 1.0); }
-
       void main() {
         vColor = aColor;
 
         vec3 base = position;
 
-        float d = length(base - uMouse);
+        float d = length(base - uMouseLocal);
         float influence = 1.0 - smoothstep(uMinDist, uMaxDist, d);
         influence = influence * influence;
 
-        // micro swirl (keeps it feeling "particle-y" even when not scattered)
         float t = uTime * 0.9 + aSeed;
         vec3 swirl = vec3(
           sin(t * 1.3) * 0.08,
@@ -367,25 +342,19 @@ function makeParticleSystemFromObject(root, totalCount = 14000) {
           sin(t * 0.9) * 0.08
         );
 
-        // scatter pushes along random dir + a bit along normal
         vec3 scatterDir = normalize(aRand + aNormal * 0.65);
-
         float scatterAmt = influence * uScatter;
+
         vec3 scattered = base + scatterDir * (scatterAmt * 1.35) + swirl * (0.8 + influence * 2.0);
-
-        // subtle "breathing" outward even when far
         vec3 idle = base + aNormal * (0.03 * sin(uTime * 1.2 + aSeed));
-
         vec3 finalPos = mix(idle, scattered, influence);
 
         vec4 mv = modelViewMatrix * vec4(finalPos, 1.0);
         gl_Position = projectionMatrix * mv;
 
-        // perspective-correct point size
         float size = uPointSize * (300.0 / -mv.z);
         gl_PointSize = clamp(size, 1.0, 18.0);
 
-        // fade a bit as it scatters (prevents blowout)
         vAlpha = mix(1.0, 0.55, influence);
       }
     `,
@@ -395,13 +364,11 @@ function makeParticleSystemFromObject(root, totalCount = 14000) {
       varying float vAlpha;
 
       void main() {
-        // soft round sprite
         vec2 uv = gl_PointCoord.xy - 0.5;
         float r = length(uv);
         float a = smoothstep(0.5, 0.12, r);
         a *= uAlpha * vAlpha;
 
-        // tiny core pop
         float core = smoothstep(0.18, 0.0, r) * 0.35;
 
         gl_FragColor = vec4(vColor + core, a);
@@ -411,17 +378,7 @@ function makeParticleSystemFromObject(root, totalCount = 14000) {
 
   const points = new THREE.Points(geom, material);
   points.frustumCulled = false;
-
   return points;
-}
-
-function disposeObject3D(root) {
-  root.traverse((o) => {
-    if (!o.isMesh) return;
-    o.geometry?.dispose?.();
-    if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose?.());
-    else o.material?.dispose?.();
-  });
 }
 
 function disposePoints(points) {
@@ -430,8 +387,8 @@ function disposePoints(points) {
 }
 
 /* ------------------------------- interaction ------------------------------- */
-const mouse = new THREE.Vector2(0, 0);
-const target = new THREE.Vector3(0, 0, 0);
+const mouseNDC = new THREE.Vector2(0, 0);
+const targetWorld = new THREE.Vector3(0, 0, 0);
 const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
 const ray = new THREE.Raycaster();
 
@@ -441,15 +398,15 @@ mount.addEventListener(
     const r = mount.getBoundingClientRect();
     const x = (e.clientX - r.left) / r.width;
     const y = (e.clientY - r.top) / r.height;
-    mouse.x = x * 2 - 1;
-    mouse.y = -(y * 2 - 1);
+    mouseNDC.x = x * 2 - 1;
+    mouseNDC.y = -(y * 2 - 1);
   },
   { passive: true }
 );
 
-function updateMouseTarget() {
-  ray.setFromCamera(mouse, camera);
-  ray.ray.intersectPlane(plane, target);
+function updateMouseTargetWorld() {
+  ray.setFromCamera(mouseNDC, camera);
+  ray.ray.intersectPlane(plane, targetWorld);
 }
 
 /* ------------------------------- state/swap -------------------------------- */
@@ -459,9 +416,13 @@ let solidMode = false;
 let currentSolid = objects[objectIndex];
 group.add(currentSolid);
 
+setAllMaterials(currentSolid, (col) => matPBR(col, 0.55, 0.15));
+
 let currentParticles = makeParticleSystemFromObject(currentSolid, 16000);
-scene.add(currentParticles);
+group.add(currentParticles); // IMPORTANT: attach to group, so transforms match automatically.
+
 currentSolid.visible = false;
+currentParticles.visible = true;
 
 function applyVisibility() {
   currentSolid.visible = solidMode;
@@ -469,19 +430,18 @@ function applyVisibility() {
 }
 
 function swap() {
-  // remove old
   group.remove(currentSolid);
-  scene.remove(currentParticles);
-
-  // dispose old particles (keep solid geometries reused if you want; here we keep)
+  group.remove(currentParticles);
   disposePoints(currentParticles);
 
   objectIndex = (objectIndex + 1) % objects.length;
   currentSolid = objects[objectIndex];
   group.add(currentSolid);
 
+  setAllMaterials(currentSolid, (col) => matPBR(col, 0.55, 0.15));
+
   currentParticles = makeParticleSystemFromObject(currentSolid, 16000);
-  scene.add(currentParticles);
+  group.add(currentParticles);
 
   currentSolid.visible = false;
   applyVisibility();
@@ -495,22 +455,18 @@ window.addEventListener("keydown", (e) => {
     applyVisibility();
   }
   if (e.code === "KeyR") {
-    // rebuild particles (handy while tuning)
-    scene.remove(currentParticles);
+    group.remove(currentParticles);
     disposePoints(currentParticles);
     currentParticles = makeParticleSystemFromObject(currentSolid, 16000);
-    scene.add(currentParticles);
+    group.add(currentParticles);
     applyVisibility();
   }
 });
-
-applyVisibility();
 
 /* ---------------------------------- resize --------------------------------- */
 function resize() {
   const w = mount.clientWidth;
   const h = mount.clientHeight;
-
   renderer.setSize(w, h);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
@@ -518,40 +474,30 @@ function resize() {
 window.addEventListener("resize", resize);
 
 /* ---------------------------------- loop ---------------------------------- */
+const mouseLocal = new THREE.Vector3();
 let t = 0;
 
 function tick() {
   requestAnimationFrame(tick);
   t += 0.01;
 
-  updateMouseTarget();
+  updateMouseTargetWorld();
 
-  // gentle "hover" follow
-  group.position.lerp(new THREE.Vector3(target.x * 0.1, target.y * 0.1, 0), 0.08);
+  group.position.lerp(new THREE.Vector3(targetWorld.x * 0.1, targetWorld.y * 0.1, 0), 0.08);
 
-  // slow showroom rotation
   group.rotation.y += 0.01;
-  group.rotation.x = THREE.MathUtils.lerp(group.rotation.x, mouse.y * 0.18, 0.06);
-  group.rotation.z = THREE.MathUtils.lerp(group.rotation.z, -mouse.x * 0.12, 0.06);
+  group.rotation.x = THREE.MathUtils.lerp(group.rotation.x, mouseNDC.y * 0.18, 0.06);
+  group.rotation.z = THREE.MathUtils.lerp(group.rotation.z, -mouseNDC.x * 0.12, 0.06);
 
-  // keep particles aligned with group transforms by baking transform into shader uniforms:
-  // simplest: just apply group transform to points (match group)
-  currentParticles.position.copy(group.position);
-  currentParticles.rotation.copy(group.rotation);
+  // convert world target -> group's local space for correct distance scatter
+  group.worldToLocal(mouseLocal.copy(targetWorld));
 
-  // push mouse to shader in world coords
-  currentParticles.material.uniforms.uTime.value = t;
-  currentParticles.material.uniforms.uMouse.value.copy(target);
-
-  // “closer => more scatter” is already distance-based in shader;
-  // this global multiplier just sets overall intensity
-  currentParticles.material.uniforms.uScatter.value = 1.65;
+  if (currentParticles?.material?.uniforms) {
+    currentParticles.material.uniforms.uTime.value = t;
+    currentParticles.material.uniforms.uMouseLocal.value.copy(mouseLocal);
+    currentParticles.material.uniforms.uScatter.value = 1.65;
+  }
 
   renderer.render(scene, camera);
 }
 tick();
-
-/* ------------------------------ optional cleanup ---------------------------- */
-// If you ever fully destroy this scene, call:
-// disposeObject3D(currentSolid); // if you created unique objects per swap
-// disposePoints(currentParticles);
